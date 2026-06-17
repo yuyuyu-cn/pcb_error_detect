@@ -32,7 +32,7 @@ from core.transforms import (
 from detection.yolo_detector import YOLODetector
 from applications.defect_report import DefectReport
 from applications.pass_fail import PassFailResult
-from utils.visualization import draw_boxes_pillow, create_comparison
+from utils.visualization import draw_boxes_pillow, create_comparison, generate_defect_density_map
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -40,7 +40,7 @@ from utils.visualization import draw_boxes_pillow, create_comparison
 # ═══════════════════════════════════════════════════════════════
 st.set_page_config(
     page_title="PCB Defect Detection",
-    page_icon="🔬",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -226,7 +226,7 @@ def load_yolo_model(model_path: str):
 # ═══════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown(
-        "<h1 style='color:#58a6ff; font-size:1.5em;'>🔬 PCB 缺陷检测</h1>"
+        "<h1 style='color:#58a6ff; font-size:1.5em;'>PCB 缺陷检测</h1>"
         "<p style='color:#8b949e; font-size:0.85em;'>"
         "数字图像处理 · 期末项目</p>",
         unsafe_allow_html=True,
@@ -250,7 +250,7 @@ with st.sidebar:
                 unsafe_allow_html=True)
     tab_choice = st.radio(
         "",
-        ["📷 图像预处理", "🤖 AI 缺陷检测", "📊 检测报告"],
+        ["图像预处理", "AI 缺陷检测", "检测报告"],
         label_visibility="collapsed",
     )
 
@@ -292,21 +292,21 @@ with st.sidebar:
 def render_traditional_tab():
     """渲染图像预处理标签页。"""
     st.markdown(
-        "<h2>📷 图像预处理 <span style='color:#8b949e; font-size:0.6em;'>"
+        "<h2>图像预处理 <span style='color:#8b949e; font-size:0.6em;'>"
         "— 传统数字图像处理方法</span></h2>",
         unsafe_allow_html=True,
     )
 
     if st.session_state.original_image is None:
-        st.info("👈 请先在左侧上传 PCB 图片")
+        st.info("请先在左侧上传 PCB 图片")
         return
 
     img = st.session_state.processed_image.copy()
 
     # 子标签：分类展示
     subtab1, subtab2, subtab3, subtab4, subtab5 = st.tabs([
-        "🔧 滤波降噪", "☀️ 图像增强", "📐 边缘检测",
-        "🔲 形态学", "🔄 几何变换"
+        "滤波降噪", "图像增强", "边缘检测",
+        "形态学", "几何变换"
     ])
 
     # ── 滤波 ──
@@ -516,8 +516,9 @@ def render_traditional_tab():
     st.divider()
     col_reset, _ = st.columns([1, 4])
     with col_reset:
-        if st.button("🔄 重置为原图"):
-            st.session_state.processed_image =                 st.session_state.original_image.copy()
+        if st.button("重置为原图"):
+            st.session_state.processed_image = \
+                st.session_state.original_image.copy()
             st.session_state._edge_result = None
             st.rerun()
 
@@ -528,13 +529,13 @@ def render_traditional_tab():
 def render_detection_tab(model_path, conf_thresh):
     """渲染 AI 缺陷检测标签页。"""
     st.markdown(
-        "<h2>🤖 AI 缺陷检测 <span style='color:#8b949e; font-size:0.6em;'>"
+        "<h2>AI 缺陷检测 <span style='color:#8b949e; font-size:0.6em;'>"
         "— YOLOv8 目标检测</span></h2>",
         unsafe_allow_html=True,
     )
 
     if st.session_state.original_image is None:
-        st.info("👈 请先在左侧上传 PCB 图片")
+        st.info("请先在左侧上传 PCB 图片")
         return
 
     img = st.session_state.processed_image
@@ -554,10 +555,10 @@ def render_detection_tab(model_path, conf_thresh):
         st.caption(f"置信度阈值: {conf_thresh}")
 
         detect_btn = st.button(
-            "🚀 开始检测", use_container_width=True,
+            "开始检测", use_container_width=True,
         )
 
-        if st.button("🧹 清除结果", use_container_width=True):
+        if st.button("清除结果", use_container_width=True):
             st.session_state.detection_result = None
             st.session_state.defect_report = None
             st.session_state.pass_fail = None
@@ -602,8 +603,41 @@ def render_detection_tab(model_path, conf_thresh):
             st.image(annotated, use_container_width=True,
                      caption=f"检测到 {len(boxes)} 个缺陷")
 
+            # 缺陷热力分布图
+            with st.expander("缺陷热力分布图", expanded=True):
+                col_hm, col_info = st.columns([3, 1])
+                with col_hm:
+                    heatmap_img = generate_defect_density_map(
+                        img, boxes, labels)
+                    st.image(
+                        cv2.cvtColor(heatmap_img, cv2.COLOR_BGR2RGB),
+                        use_container_width=True,
+                        caption="红=高密度缺陷区  蓝=低密度区"
+                    )
+                with col_info:
+                    st.markdown("**密度说明**")
+                    st.caption(
+                        "热力图以检测框中心为源点，"
+                        "经高斯扩散生成连续密度场。\n\n"
+                        "Short / Open Circuit 权重最高(3x)，"
+                        "以红色醒目标记严重缺陷聚集区。"
+                    )
+                    if len(boxes) >= 2:
+                        # 计算缺陷分散度
+                        centers = np.array([
+                            [(b[0]+b[2])/2, (b[1]+b[3])/2]
+                            for b in boxes
+                        ])
+                        spread = np.std(centers, axis=0)
+                        spread_ratio = (spread[0] * spread[1]) / (
+                            img.shape[1] * img.shape[0]) * 10000
+                        st.caption(
+                            f"空间分散度: {spread_ratio:.1f}\n"
+                            f"({ '分布集中' if spread_ratio < 200 else '分布分散' })"
+                        )
+
             # 缺陷列表
-            with st.expander(f"📋 缺陷详情 ({len(boxes)})"):
+            with st.expander(f"缺陷详情 ({len(boxes)})"):
                 for i, (box, label, score) in enumerate(
                         zip(boxes, labels, scores)):
                     x1, y1, x2, y2 = [int(v) for v in box]
@@ -615,7 +649,7 @@ def render_detection_tab(model_path, conf_thresh):
                     )
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("✅ 未检测到缺陷")
+            st.info("未检测到缺陷")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -624,7 +658,7 @@ def render_detection_tab(model_path, conf_thresh):
 def render_report_tab():
     """渲染检测报告标签页。"""
     st.markdown(
-        "<h2>📊 检测报告 <span style='color:#8b949e; font-size:0.6em;'>"
+        "<h2>检测报告 <span style='color:#8b949e; font-size:0.6em;'>"
         "— 缺陷分类 & PASS/FAIL 判定</span></h2>",
         unsafe_allow_html=True,
     )
@@ -683,8 +717,7 @@ def render_report_tab():
     # ── 判定理由 ──
     if pf:
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown(f'<p class="card-header">'
-                    f'{"✅" if pf.verdict=="PASS" else "❌"} 判定详情</p>',
+        st.markdown(f'<p class="card-header">判定详情</p>',
                     unsafe_allow_html=True)
         st.markdown(pf.reason)
         if pf.details:
@@ -695,7 +728,7 @@ def render_report_tab():
     # ── 功能一：缺陷分类报告 ──
     st.divider()
     st.markdown(
-        "<h3>📋 功能一：缺陷分类报告</h3>",
+        "<h3>功能一：缺陷分类报告</h3>",
         unsafe_allow_html=True,
     )
 
@@ -737,13 +770,13 @@ def render_report_tab():
         st.markdown('</div>', unsafe_allow_html=True)
 
         # 导出按钮
-        if st.button("📥 导出报告 JSON", use_container_width=True):
+        if st.button("导出报告 JSON", use_container_width=True):
             import json
             report_dict = report.to_dict()
             if pf:
                 report_dict["pass_fail"] = pf.to_dict()
             st.download_button(
-                "⬇ 下载 JSON",
+                "下载 JSON",
                 json.dumps(report_dict, ensure_ascii=False, indent=2),
                 "pcb_defect_report.json",
                 "application/json",
@@ -753,7 +786,7 @@ def render_report_tab():
     # ── 功能二：PASS/FAIL 判定 ──
     st.divider()
     st.markdown(
-        "<h3>⚖️ 功能二：PASS/FAIL 自动判定</h3>",
+        "<h3>功能二：PASS/FAIL 自动判定</h3>",
         unsafe_allow_html=True,
     )
     st.caption(
@@ -789,13 +822,13 @@ def render_report_tab():
 
 # ═══════════════════════════════════════════════════════════════
 
-if tab_choice == "📷 图像预处理":
+if tab_choice == "图像预处理":
     render_traditional_tab()
 
-elif tab_choice == "🤖 AI 缺陷检测":
+elif tab_choice == "AI 缺陷检测":
     render_detection_tab(model_path, conf_thresh)
 
-elif tab_choice == "📊 检测报告":
+elif tab_choice == "检测报告":
     render_report_tab()
 
 # 启动入口

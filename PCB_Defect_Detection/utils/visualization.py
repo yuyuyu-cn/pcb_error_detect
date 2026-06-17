@@ -60,6 +60,59 @@ def draw_heatmap(image, mask, alpha=0.45):
     return cv2.addWeighted(image, 1-alpha, heatmap, alpha, 0)
 
 
+def generate_defect_density_map(image, boxes, labels=None, blur_sigma=45):
+    """根据缺陷框生成密度热力图，叠加到原图上。
+
+    原理：将每个缺陷框的中心或区域映射到一张空白的灰度密度图上，
+    用高斯模糊扩散成连续热力场，再通过 JET colormap 渲染并叠加。
+
+    Args:
+        image: BGR 图像
+        boxes: [[x1,y1,x2,y2], ...]
+        labels: 缺陷类型列表，用于加权
+        blur_sigma: 高斯模糊 sigma，越大越扩散
+
+    Returns:
+        BGR 叠加图
+    """
+    h, w = image.shape[:2]
+    density = np.zeros((h, w), dtype=np.float32)
+
+    severity_weight = {
+        "Short": 3.0, "Open Circuit": 3.0,
+        "Missing Hole": 2.0, "Mouse Bite": 1.5,
+        "Spur": 1.0, "Spurious Copper": 1.0,
+    }
+
+    for i, box in enumerate(boxes):
+        x1, y1, x2, y2 = [int(v) for v in box]
+        weight = severity_weight.get(labels[i], 1.0) if labels else 1.0
+        # 在框的中心区域写入权重
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        radius = max((x2 - x1) // 2, (y2 - y1) // 2, 15)
+        yy, xx = np.ogrid[:h, :w]
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= radius ** 2
+        density[mask] += weight
+
+    if density.max() > 0:
+        density = (density / density.max() * 255).astype(np.uint8)
+    density = cv2.GaussianBlur(density, (0, 0), blur_sigma)
+
+    heatmap = cv2.applyColorMap(density, cv2.COLORMAP_JET)
+    result = cv2.addWeighted(image, 0.55, heatmap, 0.45, 0)
+
+    # 叠加原缺陷框（细线）
+    for i, box in enumerate(boxes):
+        x1, y1, x2, y2 = [int(v) for v in box]
+        label = labels[i] if labels else "defect"
+        color = DEFECT_COLORS.get(label, DEFECT_COLORS["default"])
+        cv2.rectangle(result, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(result, label, (x1, y1 - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+    return result
+
+
 def create_comparison(original, processed, labels=("Original", "Processed"), vertical=False):
     h1, w1 = original.shape[:2]
     h2, w2 = processed.shape[:2]
