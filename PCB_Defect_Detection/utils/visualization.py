@@ -15,38 +15,57 @@ DEFECT_COLORS = {
     "default":          (200, 200, 200),
 }
 
-try:
-    _FONT = ImageFont.truetype("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc", 14)
-except Exception:
-    try:
-        _FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-    except Exception:
-        _FONT = ImageFont.load_default()
+def _get_font(image_width):
+    """根据图像宽度自适应字体大小。"""
+    font_size = max(14, min(image_width // 35, 36))
+    font_paths = [
+        "C:/Windows/Fonts/msyh.ttc",      # 微软雅黑 (Win)
+        "C:/Windows/Fonts/simhei.ttf",     # 黑体 (Win)
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Linux
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",        # Linux fallback
+    ]
+    for path in font_paths:
+        try:
+            return ImageFont.truetype(path, font_size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
-def draw_boxes_pillow(image, boxes, labels=None, scores=None, line_width=2):
+def draw_boxes_pillow(image, boxes, labels=None, scores=None, line_width=None):
     img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb)
     draw = ImageDraw.Draw(pil_img)
+    h, w = image.shape[:2]
     if labels is None:
         labels = ["Defect"] * len(boxes)
     if scores is None:
         scores = [None] * len(boxes)
+    if line_width is None:
+        line_width = max(2, w // 400)
+    font = _get_font(w)
     for i, box in enumerate(boxes):
         x1, y1, x2, y2 = [int(v) for v in box]
         label = labels[i] if i < len(labels) else "Defect"
         score = scores[i] if i < len(scores) else None
         color = DEFECT_COLORS.get(label, DEFECT_COLORS["default"])
         for offset in range(line_width):
-            draw.rectangle([x1-offset, y1-offset, x2+offset, y2+offset], outline=color)
+            draw.rectangle(
+                [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
+                outline=color)
         text = f"{label}" if score is None else f"{label} {score:.2f}"
-        bbox = draw.textbbox((0, 0), text, font=_FONT)
-        tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-        label_y = y1 - th - 6
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        padding = max(4, line_width)
+        label_y = y1 - th - padding * 2
         if label_y < 0:
-            label_y = y1 + 2
-        draw.rectangle([x1-1, label_y-2, x1+tw+5, label_y+th+2], fill=color)
-        draw.text((x1+2, label_y), text, fill=(255, 255, 255), font=_FONT)
+            label_y = y1 + padding
+        draw.rectangle(
+            [x1 - 1, label_y - padding,
+             x1 + tw + padding * 2, label_y + th + padding],
+            fill=color)
+        draw.text((x1 + padding, label_y), text, fill=(255, 255, 255),
+                  font=font)
     return np.array(pil_img)
 
 
@@ -101,14 +120,14 @@ def generate_defect_density_map(image, boxes, labels=None, blur_sigma=45):
     heatmap = cv2.applyColorMap(density, cv2.COLORMAP_JET)
     result = cv2.addWeighted(image, 0.55, heatmap, 0.45, 0)
 
-    # 叠加原缺陷框（细线）
+    # 叠加原缺陷框
     for i, box in enumerate(boxes):
         x1, y1, x2, y2 = [int(v) for v in box]
         label = labels[i] if labels else "defect"
         color = DEFECT_COLORS.get(label, DEFECT_COLORS["default"])
         cv2.rectangle(result, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(result, label, (x1, y1 - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+        cv2.putText(result, label, (x1, max(y1 - 8, 15)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
 
     return result
 

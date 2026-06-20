@@ -600,8 +600,13 @@ def render_detection_tab(model_path, conf_thresh):
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.markdown('<p class="card-header">检测结果</p>',
                         unsafe_allow_html=True)
-            st.image(annotated, use_container_width=True,
-                     caption=f"检测到 {len(boxes)} 个缺陷")
+            st.image(annotated, use_container_width=True)
+            st.markdown(
+                f"<p style='text-align:center; font-size:1.6em; "
+                f"color:#e6edf3; margin-top:8px; font-weight:600;'>"
+                f"检测到 {len(boxes)} 个缺陷</p>",
+                unsafe_allow_html=True,
+            )
 
             # 缺陷热力分布图
             with st.expander("缺陷热力分布图", expanded=True):
